@@ -29,6 +29,30 @@ If your cluster has GPU partitions like `gpu_v100_1`, `gpu_v100_2`, `gpu_a100_8`
 sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
 ```
 
+### Conda Env Bootstrapping (vLLM)
+
+On your cluster the default `python` may be too old (you saw Python 3.6.8). The server job script can bootstrap a cached conda env and install `vllm` automatically.
+
+Defaults (override via env vars at submit time):
+
+- `BOOTSTRAP_CONDA_ENV=1` (enabled in `glm47_track_a.sbatch`)
+- `PYTHON_VERSION=3.10`
+- `ENV_PREFIX=$SCRATCH/.conda_envs/glm47-vllm-py310`
+- `REQUIREMENTS_FILE=track-a/requirements.txt`
+
+Example:
+
+```bash
+cd /home/<user>/dop-project2
+BOOTSTRAP_CONDA_ENV=1 PYTHON_VERSION=3.10 sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
+```
+
+If pip downloads are blocked on compute nodes, pre-download wheels to a directory and use:
+
+```bash
+WHEELHOUSE_DIR=/path/to/wheels BOOTSTRAP_CONDA_ENV=1 sbatch track-a/slurm/glm47_track_a.sbatch
+```
+
 Watch the queue:
 
 ```bash

@@ -38,6 +38,13 @@ export MIN_VRAM_GB_PER_GPU="${MIN_VRAM_GB_PER_GPU:-48}"
 # vLLM knobs (optional)
 export TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 
+# ---- Conda bootstrap (optional but recommended on this cluster: system python is old) ----
+# Creates/reuses a cached env and installs vLLM. Disable with BOOTSTRAP_CONDA_ENV=0.
+export BOOTSTRAP_CONDA_ENV="${BOOTSTRAP_CONDA_ENV:-1}"
+export PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
+export ENV_PREFIX="${ENV_PREFIX:-${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310}"
+export REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-${REPO_DIR}/track-a/requirements.txt}"
+
 # Cache locations (set to a persistent FS if available; avoid relying on $SCRATCH unless intentional)
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/transformers}"
@@ -49,6 +56,11 @@ echo "[track-a] bind=${HOST}:${PORT}"
 echo "[track-a] min_vram_gb_per_gpu=${MIN_VRAM_GB_PER_GPU}"
 echo "[track-a] tp_size=${TENSOR_PARALLEL_SIZE}"
 
+if [[ "${BOOTSTRAP_CONDA_ENV}" == "1" ]]; then
+  echo "[track-a] bootstrapping conda env: ${ENV_PREFIX} (python=${PYTHON_VERSION})"
+  "${REPO_DIR}/track-a/bin/bootstrap_conda_env.sh"
+fi
+
 echo "[track-a] launching server under srun..."
 
 # Use srun to comply with cluster policy (run inside allocation).
@@ -59,4 +71,4 @@ if [[ ! -x "${REPO_DIR}/track-a/bin/run_server.sh" ]]; then
 fi
 
 cd "${REPO_DIR}"
-srun --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"
+srun --export=ALL --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"

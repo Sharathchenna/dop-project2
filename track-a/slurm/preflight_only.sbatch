@@ -26,6 +26,12 @@ echo "[preflight-only] repo_dir=${REPO_DIR}"
 # Preflight thresholds (tune once you know your GPU type)
 export MIN_VRAM_GB_PER_GPU="${MIN_VRAM_GB_PER_GPU:-48}"
 
+# Optional: bootstrap conda env + install vLLM (slow; use only if you want to test vLLM import)
+export BOOTSTRAP_CONDA_ENV="${BOOTSTRAP_CONDA_ENV:-0}"
+export PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
+export ENV_PREFIX="${ENV_PREFIX:-${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310}"
+export REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-${REPO_DIR}/track-a/requirements.txt}"
+
 # If you only want GPU/VRAM validation and don't yet have vLLM installed, set:
 export SKIP_VLLM_CHECK="${SKIP_VLLM_CHECK:-0}"
 
@@ -39,4 +45,9 @@ if [[ ! -x "${REPO_DIR}/track-a/bin/preflight.sh" ]]; then
 fi
 
 cd "${REPO_DIR}"
-srun --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"
+if [[ "${BOOTSTRAP_CONDA_ENV}" == "1" ]]; then
+  echo "[preflight-only] bootstrapping conda env: ${ENV_PREFIX} (python=${PYTHON_VERSION})"
+  "${REPO_DIR}/track-a/bin/bootstrap_conda_env.sh"
+fi
+
+srun --export=ALL --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"
