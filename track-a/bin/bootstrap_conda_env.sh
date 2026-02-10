@@ -16,6 +16,9 @@ PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 ENV_PREFIX="${ENV_PREFIX:-${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310}"
 REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-}"
 WHEELHOUSE_DIR="${WHEELHOUSE_DIR:-}"
+# If you want the script to run `conda tos accept ...` for the default Anaconda channels,
+# you must opt in explicitly.
+AUTO_ACCEPT_ANACONDA_TOS="${AUTO_ACCEPT_ANACONDA_TOS:-0}"
 
 BOOTSTRAP_PACKAGES_DEFAULT=("vllm")
 IFS=',' read -r -a BOOTSTRAP_PACKAGES <<< "${BOOTSTRAP_PACKAGES:-}"
@@ -51,6 +54,19 @@ ensure_conda() {
   die "conda not found. Load your anaconda/miniconda module in the sbatch script or install Miniconda under \$HOME and set CONDA_SH=/path/to/conda.sh."
 }
 
+maybe_accept_tos() {
+  if [[ "${AUTO_ACCEPT_ANACONDA_TOS}" != "1" ]]; then
+    return 0
+  fi
+
+  # This subcommand exists only in newer conda. Best-effort.
+  if conda tos --help >/dev/null 2>&1; then
+    log "AUTO_ACCEPT_ANACONDA_TOS=1; accepting Anaconda channel ToS (main, r)"
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
+    conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
+  fi
+}
+
 create_env_if_needed() {
   if [[ -d "${ENV_PREFIX}" && -f "${ENV_PREFIX}/bin/python" ]]; then
     log "env exists: ${ENV_PREFIX}"
@@ -75,6 +91,8 @@ create_env_if_needed() {
     log "env created by another job while waiting: ${ENV_PREFIX}"
     return 0
   fi
+
+  maybe_accept_tos
 
   log "creating conda env at ${ENV_PREFIX} with python=${PYTHON_VERSION}"
   if command -v mamba >/dev/null 2>&1; then

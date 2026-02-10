@@ -1,124 +1,207 @@
-# Track A (Sharanga Slurm Prototype) Runbook
+# Track A: Sharanga Slurm Prototype (Single-Node) Runbook
 
-This track runs the model server *only* as a Slurm GPU job on a single compute node and accesses it via an SSH tunnel.
+This track runs an OpenAI-compatible HTTP server for `zai-org/GLM-4.7-Flash` **only inside a Slurm allocation** and accesses it via an SSH tunnel.
 
-## What You Get
+## Files
 
-- Slurm batch script: `track-a/slurm/glm47_track_a.sbatch`
-- Preflight checks (GPU count + VRAM + vLLM availability): `track-a/bin/preflight.sh`
-- Server launcher (OpenAI-compatible endpoint): `track-a/bin/run_server.sh`
-- Smoke test (run on your laptop after tunneling): `track-a/bin/smoke_test.sh`
+- Serve job: `track-a/slurm/glm47_track_a.sbatch`
+- Preflight-only job: `track-a/slurm/preflight_only.sbatch`
+- Preflight checks: `track-a/bin/preflight.sh`
+- Server runner: `track-a/bin/run_server.sh`
+- Conda bootstrap (create/reuse env + install requirements): `track-a/bin/bootstrap_conda_env.sh`
+- Requirements: `track-a/requirements.txt`
+- Laptop smoke test: `track-a/bin/smoke_test.sh`
 
-## Assumptions
+## Cluster Reality Notes (From Your Session)
 
-- You will run this on Sharanga via Slurm (no model serving on login node).
-- Your Python environment on the compute node already has `vllm` installed, or you will load/activate it in the batch script.
-- The model is accessible as a HF model id (or local path) via `MODEL_ID` (default: `zai-org/GLM-4.7-Flash`).
+- GPU partitions are not named `gpu`. You have partitions like:
+  - `gpu_v100_1`, `gpu_v100_2`, `gpu_a100_8`, `gpu_h100_4`
+- QoS policy may enforce minimum CPUs for interactive shells (example you saw: `cpulimit` with `MinCPUs=4`).
+- Cluster banner requests **package installation (anaconda3/conda/pip)** be done on an **interactive Slurm shell**, not in long batch jobs.
+- Default system python on GPU nodes can be old (you saw Python 3.6.8), so you need your own env.
 
-## 1) Submit The Job
+## 0) Get This Repo Onto HPC
 
-From the cluster (in this repo directory):
+You must have the repo on the HPC filesystem, e.g.:
 
 ```bash
-sbatch track-a/slurm/glm47_track_a.sbatch
+/home/<user>/dop-project2/track-a/...
 ```
 
-If your cluster has GPU partitions like `gpu_v100_1`, `gpu_v100_2`, `gpu_a100_8`, `gpu_h100_4`, you can override:
+If `track-a/bin/preflight.sh` is missing on HPC, Slurm jobs will fail with "No such file or directory".
+
+## 1) Pick A GPU Partition
+
+See partitions and time limits:
 
 ```bash
-sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
+sinfo -o "%P %a %l %D %t"
 ```
 
-### Conda Env Bootstrapping (vLLM)
+Submit jobs with `-p` to choose the GPU type you want:
 
-On your cluster the default `python` may be too old (you saw Python 3.6.8). Also, the cluster banner asks that compilation/package installation (anaconda3) be done from an **interactive Slurm job shell**. The recommended flow is:
+```bash
+sbatch -p gpu_h100_4 ...
+```
 
-1. Create the conda env once in an interactive job.
-2. Run the serving job using that env via `ENV_PREFIX` (no installs during serving).
+## 2) (Optional) Preflight Only (VRAM + GPU Visibility)
 
-Defaults (override via env vars at submit time):
-
-- `BOOTSTRAP_CONDA_ENV=0` (disabled by default in `glm47_track_a.sbatch`)
-- `PYTHON_VERSION=3.10`
-- `ENV_PREFIX=$SCRATCH/.conda_envs/glm47-vllm-py310`
-- `REQUIREMENTS_FILE=track-a/requirements.txt`
-
-Interactive env creation example:
+From the repo root on the login node:
 
 ```bash
 cd /home/<user>/dop-project2
-srun -p compute -N 1 -n 1 -t 0-01:00 --pty bash -i
-# load conda/anaconda if needed, then:
-export ENV_PREFIX="$SCRATCH/.conda_envs/glm47-vllm-py310"
+SKIP_VLLM_CHECK=1 sbatch -p gpu_h100_4 track-a/slurm/preflight_only.sbatch
+```
+
+Watch logs:
+
+```bash
+tail -f preflight-<jobid>.out
+tail -f preflight-<jobid>.err
+```
+
+## 3) Create The Python/vLLM Environment (Interactive Slurm Shell)
+
+### 3.1 Get An Interactive Shell (Compute Partition)
+
+Use at least 4 CPUs to satisfy typical interactive QoS minimums:
+
+```bash
+cd /home/<user>/dop-project2
+srun --export=ALL -p compute --qos=cpulimit -N 1 -n 1 -c 4 --mem=8G -t 0-00:30 --pty bash -i
+```
+
+### 3.2 Make Conda Available
+
+If you installed Miniconda to `$HOME/miniconda3`:
+
+```bash
+source "$HOME/miniconda3/etc/profile.d/conda.sh"
+conda --version
+```
+
+If your site provides a module instead, use that (examples only):
+
+```bash
+module avail
+module load anaconda3
+conda --version
+```
+
+### 3.3 Accept Anaconda Channel ToS (Once)
+
+If conda blocks non-interactive installs with a ToS error, accept once:
+
+```bash
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+```
+
+### 3.4 Create/Reuse The Env And Install Requirements
+
+Important: `$SCRATCH` may be empty on some nodes, so use `${SCRATCH:-$HOME}`.
+
+```bash
+export ENV_PREFIX="${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310"
 export REQUIREMENTS_FILE="$PWD/track-a/requirements.txt"
+
 ./track-a/bin/bootstrap_conda_env.sh
-exit
 ```
 
-Then submit the serving job (pointing at the same env):
-
-```bash
-cd /home/<user>/dop-project2
-ENV_PREFIX="$SCRATCH/.conda_envs/glm47-vllm-py310" sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
-```
-
-If pip downloads are blocked on the cluster, pre-download wheels to a directory and use during the interactive install:
+If pip downloads are blocked, pre-download wheels somewhere and point at them:
 
 ```bash
 export WHEELHOUSE_DIR=/path/to/wheels
 ./track-a/bin/bootstrap_conda_env.sh
 ```
 
-Watch the queue:
+Exit the interactive shell:
+
+```bash
+exit
+```
+
+## 4) Submit The Serving Job
+
+From the repo root on the login node:
+
+```bash
+cd /home/<user>/dop-project2
+ENV_PREFIX="${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310" \
+  sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
+```
+
+Monitor:
 
 ```bash
 squeue -u "$USER"
+squeue -j <jobid> -o "%.18i %.9P %.12j %.8T %.10M %.6D %R"
 ```
 
-Get the assigned node once running:
+Logs are written in the directory you ran `sbatch` from:
+
+```bash
+tail -f track-a-<jobid>.out
+tail -f track-a-<jobid>.err
+```
+
+## 5) Find The Node And Tunnel From Your Laptop
+
+Get node:
 
 ```bash
 squeue -j <jobid> -h -o %N
 ```
 
-## 2) Create The SSH Tunnel (From Your Laptop)
+Tunnel (from your laptop):
 
 ```bash
 ssh -L 8000:<assigned-node>:8000 <username>@hpc.bits-hyderabad.ac.in
 ```
 
-If you changed the port in the job script, use the same local/remote port.
-
-## 3) Call The API Locally (From Your Laptop)
+## 6) Smoke Test (From Your Laptop)
 
 ```bash
-./track-a/bin/smoke_test.sh
+LLM_BASE_URL=http://localhost:8000 \
+LLM_MODEL=glm47-flash30b \
+  /path/to/dop-project2/track-a/bin/smoke_test.sh
 ```
 
-Or direct curl:
+Or curl:
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "glm47-flash30b",
-    "messages": [{"role":"user","content":"Say hello in one sentence."}],
-    "temperature": 0.2
+    "messages": [{"role":"user","content":"Return OK only."}],
+    "temperature": 0
   }'
 ```
 
-## 4) Logs / Debug
+## Common Issues
 
-- Slurm output: `track-a-%j.out` (in the submit directory)
-- Slurm error: `track-a-%j.err` (in the submit directory)
+### "invalid partition specified"
 
-Common failure modes:
+Use `sinfo` to find the right partition name and submit with `-p`, e.g. `-p gpu_h100_4`.
 
-- Preflight exits due to insufficient VRAM: increase resources or adjust `MIN_VRAM_GB_PER_GPU` (only if you are sure).
-- `vllm` not found: load modules / activate conda in `track-a/slurm/glm47_track_a.sbatch`.
-- Port in use on node: set `PORT` to a different value.
+### "No such file or directory" pointing to `/var/spool/...`
 
-## 5) 24h Walltime Pattern
+Submit from the repo root (`cd /home/<user>/dop-project2`) so `SLURM_SUBMIT_DIR` points at the repo.
 
-Sharanga terminates GPU jobs beyond 24h. This job uses `0-23:50`.
-Plan to resubmit daily; you can keep the client contract stable by keeping the same API path and model alias.
+### "conda: command not found"
+
+In the interactive shell, you must `source "$HOME/miniconda3/etc/profile.d/conda.sh"` (or load your conda module).
+
+### Conda ToS blocking creates
+
+Run the two `conda tos accept ...` commands once, then retry.
+
+### `$SCRATCH` is empty -> paths become `/.conda_envs/...`
+
+Use `${SCRATCH:-$HOME}` as shown above, or set `SCRATCH` to your real scratch path if your site uses one.
+
+### 24h runtime limit
+
+The serve job uses `0-23:50` to stay under 24h; plan to resubmit daily.
+
