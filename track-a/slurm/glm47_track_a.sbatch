@@ -38,9 +38,11 @@ export MIN_VRAM_GB_PER_GPU="${MIN_VRAM_GB_PER_GPU:-48}"
 # vLLM knobs (optional)
 export TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 
-# ---- Conda bootstrap (optional but recommended on this cluster: system python is old) ----
-# Creates/reuses a cached env and installs vLLM. Disable with BOOTSTRAP_CONDA_ENV=0.
-export BOOTSTRAP_CONDA_ENV="${BOOTSTRAP_CONDA_ENV:-1}"
+# ---- Conda bootstrap (optional) ----
+# The cluster banner requests package installation (anaconda3) be done from an interactive Slurm shell.
+# So default is disabled; create the env interactively, then run the server job using that ENV_PREFIX.
+# You can still set BOOTSTRAP_CONDA_ENV=1 if your policy/admin allows installs in batch jobs.
+export BOOTSTRAP_CONDA_ENV="${BOOTSTRAP_CONDA_ENV:-0}"
 export PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
 export ENV_PREFIX="${ENV_PREFIX:-${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310}"
 export REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-${REPO_DIR}/track-a/requirements.txt}"

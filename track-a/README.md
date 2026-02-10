@@ -31,26 +31,42 @@ sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
 
 ### Conda Env Bootstrapping (vLLM)
 
-On your cluster the default `python` may be too old (you saw Python 3.6.8). The server job script can bootstrap a cached conda env and install `vllm` automatically.
+On your cluster the default `python` may be too old (you saw Python 3.6.8). Also, the cluster banner asks that compilation/package installation (anaconda3) be done from an **interactive Slurm job shell**. The recommended flow is:
+
+1. Create the conda env once in an interactive job.
+2. Run the serving job using that env via `ENV_PREFIX` (no installs during serving).
 
 Defaults (override via env vars at submit time):
 
-- `BOOTSTRAP_CONDA_ENV=1` (enabled in `glm47_track_a.sbatch`)
+- `BOOTSTRAP_CONDA_ENV=0` (disabled by default in `glm47_track_a.sbatch`)
 - `PYTHON_VERSION=3.10`
 - `ENV_PREFIX=$SCRATCH/.conda_envs/glm47-vllm-py310`
 - `REQUIREMENTS_FILE=track-a/requirements.txt`
 
-Example:
+Interactive env creation example:
 
 ```bash
 cd /home/<user>/dop-project2
-BOOTSTRAP_CONDA_ENV=1 PYTHON_VERSION=3.10 sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
+srun -p compute -N 1 -n 1 -t 0-01:00 --pty bash -i
+# load conda/anaconda if needed, then:
+export ENV_PREFIX="$SCRATCH/.conda_envs/glm47-vllm-py310"
+export REQUIREMENTS_FILE="$PWD/track-a/requirements.txt"
+./track-a/bin/bootstrap_conda_env.sh
+exit
 ```
 
-If pip downloads are blocked on compute nodes, pre-download wheels to a directory and use:
+Then submit the serving job (pointing at the same env):
 
 ```bash
-WHEELHOUSE_DIR=/path/to/wheels BOOTSTRAP_CONDA_ENV=1 sbatch track-a/slurm/glm47_track_a.sbatch
+cd /home/<user>/dop-project2
+ENV_PREFIX="$SCRATCH/.conda_envs/glm47-vllm-py310" sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
+```
+
+If pip downloads are blocked on the cluster, pre-download wheels to a directory and use during the interactive install:
+
+```bash
+export WHEELHOUSE_DIR=/path/to/wheels
+./track-a/bin/bootstrap_conda_env.sh
 ```
 
 Watch the queue:
