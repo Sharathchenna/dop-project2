@@ -9,8 +9,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_DIR="${REPO_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}"
 
 echo "[track-a] job_id=${SLURM_JOB_ID:-}"
 echo "[track-a] user=${USER:-}"
@@ -18,7 +17,6 @@ echo "[track-a] submit_host=${SLURM_SUBMIT_HOST:-}"
 echo "[track-a] nodelist=${SLURM_JOB_NODELIST:-}"
 echo "[track-a] starting at $(date)"
 echo "[track-a] NOTE: override partition with: sbatch -p <partition> this_script.sbatch"
-echo "[track-a] script_dir=${SCRIPT_DIR}"
 echo "[track-a] repo_dir=${REPO_DIR}"
 
 # ---- Environment (edit as needed) ----
@@ -54,5 +52,11 @@ echo "[track-a] tp_size=${TENSOR_PARALLEL_SIZE}"
 echo "[track-a] launching server under srun..."
 
 # Use srun to comply with cluster policy (run inside allocation).
+if [[ ! -x "${REPO_DIR}/track-a/bin/run_server.sh" ]]; then
+  echo "[track-a] ERROR: ${REPO_DIR}/track-a/bin/run_server.sh not found/executable." >&2
+  echo "[track-a] Submit from the repo root so SLURM_SUBMIT_DIR points to it, or set REPO_DIR explicitly." >&2
+  exit 2
+fi
+
 cd "${REPO_DIR}"
 srun --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"
