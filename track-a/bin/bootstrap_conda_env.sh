@@ -13,7 +13,9 @@ die() { echo "[bootstrap] ERROR: $*" >&2; exit 2; }
 # - vLLM has tight coupling to CUDA/Torch; you may need to load the right CUDA module first.
 
 PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
-ENV_PREFIX="${ENV_PREFIX:-${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310}"
+# Default to $HOME to avoid clusters where $SCRATCH is not exported in all contexts.
+# Override to a scratch filesystem explicitly if desired.
+ENV_PREFIX="${ENV_PREFIX:-$HOME/.conda_envs/glm47-vllm-py310}"
 REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-}"
 WHEELHOUSE_DIR="${WHEELHOUSE_DIR:-}"
 # If you want the script to run `conda tos accept ...` for the default Anaconda channels,

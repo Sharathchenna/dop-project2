@@ -44,7 +44,7 @@ export TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 # You can still set BOOTSTRAP_CONDA_ENV=1 if your policy/admin allows installs in batch jobs.
 export BOOTSTRAP_CONDA_ENV="${BOOTSTRAP_CONDA_ENV:-0}"
 export PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
-export ENV_PREFIX="${ENV_PREFIX:-${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310}"
+export ENV_PREFIX="${ENV_PREFIX:-$HOME/.conda_envs/glm47-vllm-py310}"
 export REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-${REPO_DIR}/track-a/requirements.txt}"
 
 # Cache locations (set to a persistent FS if available; avoid relying on $SCRATCH unless intentional)
@@ -90,4 +90,4 @@ export SLURM_CPU_BIND=none
 unset SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE || true
 
 cd "${REPO_DIR}"
-srun --cpu-bind=none --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"
+srun --cpu-bind=none --export=ALL,ENV_PREFIX,PATH,SLURM_CPU_BIND --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"

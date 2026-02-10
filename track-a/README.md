@@ -99,10 +99,11 @@ conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
 ### 3.4 Create/Reuse The Env And Install Requirements
 
-Important: `$SCRATCH` may be empty on some nodes, so use `${SCRATCH:-$HOME}`.
+Important: `$SCRATCH` may be empty in some contexts. This runbook defaults the env to `$HOME/.conda_envs/...` for reliability.
+If you want the env on scratch, set `ENV_PREFIX` explicitly to your real scratch path and use the same value everywhere.
 
 ```bash
-export ENV_PREFIX="${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310"
+export ENV_PREFIX="$HOME/.conda_envs/glm47-vllm-py310"
 export REQUIREMENTS_FILE="$PWD/track-a/requirements.txt"
 
 ./track-a/bin/bootstrap_conda_env.sh
@@ -132,7 +133,7 @@ From the repo root on the login node:
 
 ```bash
 cd /home/<user>/dop-project2
-ENV_PREFIX="${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310" \
+ENV_PREFIX="$HOME/.conda_envs/glm47-vllm-py310" \
   sbatch -p gpu_h100_4 track-a/slurm/glm47_track_a.sbatch
 ```
 

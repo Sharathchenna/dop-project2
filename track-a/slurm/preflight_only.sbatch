@@ -29,7 +29,7 @@ export MIN_VRAM_GB_PER_GPU="${MIN_VRAM_GB_PER_GPU:-48}"
 # Optional: bootstrap conda env + install vLLM (slow; use only if you want to test vLLM import)
 export BOOTSTRAP_CONDA_ENV="${BOOTSTRAP_CONDA_ENV:-0}"
 export PYTHON_VERSION="${PYTHON_VERSION:-3.10}"
-export ENV_PREFIX="${ENV_PREFIX:-${SCRATCH:-$HOME}/.conda_envs/glm47-vllm-py310}"
+export ENV_PREFIX="${ENV_PREFIX:-$HOME/.conda_envs/glm47-vllm-py310}"
 export REQUIREMENTS_FILE="${REQUIREMENTS_FILE:-${REPO_DIR}/track-a/requirements.txt}"
 
 # If you only want GPU/VRAM validation and don't yet have vLLM installed, set:
@@ -58,4 +58,4 @@ fi
 unset SLURM_TRES_PER_TASK || true
 export SLURM_CPU_BIND=none
 unset SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE || true
-srun --cpu-bind=none --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"
+srun --cpu-bind=none --export=ALL,ENV_PREFIX,PATH,SLURM_CPU_BIND --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"
