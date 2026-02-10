@@ -115,6 +115,17 @@ pip_install() {
 
   "${pybin}" -m pip install -U pip setuptools wheel
 
+  # vLLM frequently falls back to building from source when no matching wheel exists.
+  # Source builds require a CUDA toolkit (nvcc) on PATH.
+  if [[ -n "${REQUIREMENTS_FILE}" && -f "${REQUIREMENTS_FILE}" ]]; then
+    if rg -q -n '^vllm([<=>].*)?$' "${REQUIREMENTS_FILE}" 2>/dev/null; then
+      if ! command -v nvcc >/dev/null 2>&1; then
+        log "WARNING: nvcc not found on PATH. If pip cannot find a prebuilt vLLM wheel, it will try to compile and fail."
+        log "WARNING: load a CUDA toolkit module (with nvcc) before running this script, or use a wheelhouse."
+      fi
+    fi
+  fi
+
   local pip_args=()
   if [[ -n "${WHEELHOUSE_DIR}" ]]; then
     pip_args+=(--no-index --find-links "${WHEELHOUSE_DIR}")

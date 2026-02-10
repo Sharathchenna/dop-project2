@@ -102,6 +102,18 @@ conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 Important: `$SCRATCH` may be empty in some contexts. This runbook defaults the env to `$HOME/.conda_envs/...` for reliability.
 If you want the env on scratch, set `ENV_PREFIX` explicitly to your real scratch path and use the same value everywhere.
 
+vLLM installation:
+- If pip finds a compatible prebuilt wheel, it will install quickly.
+- If pip cannot find a wheel, it will try to compile vLLM and you must have a CUDA toolkit with `nvcc` available.
+  Load the CUDA module *before* running the bootstrap (example names vary by cluster):
+
+```bash
+module avail cuda
+module load cuda
+which nvcc
+nvcc --version
+```
+
 ```bash
 export ENV_PREFIX="$HOME/.conda_envs/glm47-vllm-py310"
 export REQUIREMENTS_FILE="$PWD/track-a/requirements.txt"
