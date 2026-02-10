@@ -50,4 +50,9 @@ if [[ "${BOOTSTRAP_CONDA_ENV}" == "1" ]]; then
   "${REPO_DIR}/track-a/bin/bootstrap_conda_env.sh"
 fi
 
+if [[ -x "${ENV_PREFIX}/bin/python" ]]; then
+  export PATH="${ENV_PREFIX}/bin:${PATH}"
+  echo "[preflight-only] using python: $(python -V 2>&1)"
+fi
+
 srun --export=ALL --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"

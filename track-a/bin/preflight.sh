@@ -42,7 +42,9 @@ if [[ "${min_vram_gb}" -gt 0 && "${min_mem_gb}" -lt "${min_vram_gb}" ]]; then
   die "Insufficient VRAM: detected ${min_mem_gb} GB < required ${min_vram_gb} GB. Refusing to start server."
 fi
 
-if command -v python >/dev/null 2>&1; then
+if [[ -n "${ENV_PREFIX:-}" && -x "${ENV_PREFIX}/bin/python" ]]; then
+  PY="${ENV_PREFIX}/bin/python"
+elif command -v python >/dev/null 2>&1; then
   PY=python
 elif command -v python3 >/dev/null 2>&1; then
   PY=python3

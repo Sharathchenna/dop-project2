@@ -13,7 +13,7 @@ This track runs the model server *only* as a Slurm GPU job on a single compute n
 
 - You will run this on Sharanga via Slurm (no model serving on login node).
 - Your Python environment on the compute node already has `vllm` installed, or you will load/activate it in the batch script.
-- The model is accessible as a HF model id (or local path) via `MODEL_ID`.
+- The model is accessible as a HF model id (or local path) via `MODEL_ID` (default: `zai-org/GLM-4.7-Flash`).
 
 ## 1) Submit The Job
 

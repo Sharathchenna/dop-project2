@@ -84,21 +84,16 @@ create_env_if_needed() {
   fi
 }
 
-activate_env() {
-  # conda activate requires conda.sh to be sourced. ensure_conda already did that if needed.
-  # shellcheck disable=SC1091
-  if [[ -z "${CONDA_SH:-}" && -f "$HOME/miniconda3/etc/profile.d/conda.sh" ]]; then
-    source "$HOME/miniconda3/etc/profile.d/conda.sh" || true
-  fi
-  # Best-effort: conda should now be a function.
-  conda activate "${ENV_PREFIX}" >/dev/null 2>&1 || conda activate "${ENV_PREFIX}"
-}
-
 pip_install() {
-  log "python=$(python -V 2>&1)"
-  log "pip=$(python -m pip -V 2>&1)"
+  local pybin="${ENV_PREFIX}/bin/python"
+  if [[ ! -x "${pybin}" ]]; then
+    die "expected python at ${pybin} but it does not exist/executable"
+  fi
 
-  python -m pip install -U pip setuptools wheel
+  log "python=$("${pybin}" -V 2>&1)"
+  log "pip=$("${pybin}" -m pip -V 2>&1)"
+
+  "${pybin}" -m pip install -U pip setuptools wheel
 
   local pip_args=()
   if [[ -n "${WHEELHOUSE_DIR}" ]]; then
@@ -111,13 +106,13 @@ pip_install() {
       die "REQUIREMENTS_FILE not found: ${REQUIREMENTS_FILE}"
     fi
     log "installing requirements: ${REQUIREMENTS_FILE}"
-    python -m pip install "${pip_args[@]}" -r "${REQUIREMENTS_FILE}"
+    "${pybin}" -m pip install "${pip_args[@]}" -r "${REQUIREMENTS_FILE}"
   else
     log "installing packages: ${BOOTSTRAP_PACKAGES[*]}"
-    python -m pip install "${pip_args[@]}" "${BOOTSTRAP_PACKAGES[@]}"
+    "${pybin}" -m pip install "${pip_args[@]}" "${BOOTSTRAP_PACKAGES[@]}"
   fi
 
-  python -c 'import vllm; print("vllm_ok", vllm.__version__)' >/dev/null 2>&1 \
+  "${pybin}" -c 'import vllm; print("vllm_ok", vllm.__version__)' >/dev/null 2>&1 \
     && log "vllm import OK" \
     || die "vllm import failed after install. This is usually a CUDA/Torch mismatch; load the correct CUDA module and/or pin torch/vllm versions."
 }
@@ -125,9 +120,7 @@ pip_install() {
 main() {
   ensure_conda
   create_env_if_needed
-  activate_env
   pip_install
 }
 
 main "$@"
-

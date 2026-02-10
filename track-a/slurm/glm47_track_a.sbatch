@@ -26,7 +26,7 @@ echo "[track-a] repo_dir=${REPO_DIR}"
 # source ~/miniconda3/etc/profile.d/conda.sh
 # conda activate vllm
 
-export MODEL_ID="${MODEL_ID:-GLM-4.7-Flash-30B}"          # HF model id or local path
+export MODEL_ID="${MODEL_ID:-zai-org/GLM-4.7-Flash}"      # HF model id or local path
 export MODEL_ALIAS="${MODEL_ALIAS:-glm47-flash30b}"       # stable client-facing name
 
 export HOST="${HOST:-0.0.0.0}"
@@ -59,6 +59,13 @@ echo "[track-a] tp_size=${TENSOR_PARALLEL_SIZE}"
 if [[ "${BOOTSTRAP_CONDA_ENV}" == "1" ]]; then
   echo "[track-a] bootstrapping conda env: ${ENV_PREFIX} (python=${PYTHON_VERSION})"
   "${REPO_DIR}/track-a/bin/bootstrap_conda_env.sh"
+fi
+
+if [[ -x "${ENV_PREFIX}/bin/python" ]]; then
+  export PATH="${ENV_PREFIX}/bin:${PATH}"
+  echo "[track-a] using python: $(python -V 2>&1)"
+else
+  echo "[track-a] WARNING: ${ENV_PREFIX}/bin/python not found; will use system python on PATH." >&2
 fi
 
 echo "[track-a] launching server under srun..."

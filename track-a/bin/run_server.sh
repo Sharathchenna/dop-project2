@@ -8,7 +8,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8000}"
-MODEL_ID="${MODEL_ID:-GLM-4.7-Flash-30B}"
+MODEL_ID="${MODEL_ID:-zai-org/GLM-4.7-Flash}"
 MODEL_ALIAS="${MODEL_ALIAS:-glm47-flash30b}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-1}"
 
@@ -18,7 +18,9 @@ log "bind=${HOST}:${PORT}"
 
 "${ROOT_DIR}/track-a/bin/preflight.sh"
 
-if command -v python >/dev/null 2>&1; then
+if [[ -n "${ENV_PREFIX:-}" && -x "${ENV_PREFIX}/bin/python" ]]; then
+  PY="${ENV_PREFIX}/bin/python"
+elif command -v python >/dev/null 2>&1; then
   PY=python
 elif command -v python3 >/dev/null 2>&1; then
   PY=python3
