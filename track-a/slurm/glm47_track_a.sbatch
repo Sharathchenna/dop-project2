@@ -79,5 +79,9 @@ if [[ ! -x "${REPO_DIR}/track-a/bin/run_server.sh" ]]; then
   exit 2
 fi
 
+# If you submit this sbatch from inside another Slurm allocation (interactive `srun` shell),
+# Slurm environment variables can leak and break nested srun steps.
+unset SLURM_TRES_PER_TASK || true
+
 cd "${REPO_DIR}"
-srun --export=ALL --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"
+srun --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"

@@ -55,4 +55,5 @@ if [[ -x "${ENV_PREFIX}/bin/python" ]]; then
   echo "[preflight-only] using python: $(python -V 2>&1)"
 fi
 
-srun --export=ALL --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"
+unset SLURM_TRES_PER_TASK || true
+srun --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"

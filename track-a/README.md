@@ -121,6 +121,11 @@ Exit the interactive shell:
 exit
 ```
 
+Important: submit `sbatch` jobs from the login node (outside the interactive `srun` shell).
+Submitting `sbatch` from inside an interactive allocation can leak `SLURM_*` variables into the new job
+and cause errors like:
+`srun: fatal: cpus-per-task set by two different environment variables ...`
+
 ## 4) Submit The Serving Job
 
 From the repo root on the login node:
@@ -204,4 +209,3 @@ Use `${SCRATCH:-$HOME}` as shown above, or set `SCRATCH` to your real scratch pa
 ### 24h runtime limit
 
 The serve job uses `0-23:50` to stay under 24h; plan to resubmit daily.
-
