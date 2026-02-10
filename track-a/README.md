@@ -150,6 +150,9 @@ tail -f track-a-<jobid>.out
 tail -f track-a-<jobid>.err
 ```
 
+If you see errors about CPU binding (e.g. "Unable to satisfy cpu bind request"), the sbatch scripts
+already force `--cpu-bind=none` for their `srun` steps.
+
 ## 5) Find The Node And Tunnel From Your Laptop
 
 Get node:

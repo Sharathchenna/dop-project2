@@ -83,5 +83,11 @@ fi
 # Slurm environment variables can leak and break nested srun steps.
 unset SLURM_TRES_PER_TASK || true
 
+# Some clusters set a default CPU binding policy that can fail for nested steps.
+# Force no CPU binding for the step to avoid:
+# "Unable to satisfy cpu bind request"
+export SLURM_CPU_BIND=none
+unset SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE || true
+
 cd "${REPO_DIR}"
-srun --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"
+srun --cpu-bind=none --ntasks=1 "${REPO_DIR}/track-a/bin/run_server.sh"

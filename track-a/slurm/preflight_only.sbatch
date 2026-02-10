@@ -56,4 +56,6 @@ if [[ -x "${ENV_PREFIX}/bin/python" ]]; then
 fi
 
 unset SLURM_TRES_PER_TASK || true
-srun --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"
+export SLURM_CPU_BIND=none
+unset SLURM_CPU_BIND_LIST SLURM_CPU_BIND_TYPE || true
+srun --cpu-bind=none --ntasks=1 "${REPO_DIR}/track-a/bin/preflight.sh"
