@@ -18,7 +18,7 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate llm
 
 ############################################
-# 2. Hugging Face cache (SAFE LOCATION)
+# 2. Hugging Face cache (HOME-safe)
 ############################################
 
 export HF_HOME=$HOME/hf_cache
@@ -26,16 +26,37 @@ export TRANSFORMERS_CACHE=$HF_HOME
 mkdir -p $HF_HOME
 
 ############################################
-# 3. Diagnostics
+# 3. Install dependencies IF missing
+############################################
+
+echo "Checking vLLM installation..."
+
+if ! command -v vllm &> /dev/null; then
+    echo "vLLM not found — installing dependencies"
+
+    pip install --upgrade pip
+
+    # Install PyTorch for CUDA 12.1 (H100 compatible)
+    pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+    # Install vLLM
+    pip install vllm
+else
+    echo "vLLM already installed"
+fi
+
+############################################
+# 4. Diagnostics
 ############################################
 
 echo "Node: $(hostname)"
-echo "Python path: $(which python)"
-echo "vLLM path: $(which vllm)"
+echo "Python: $(which python)"
+echo "vLLM: $(which vllm)"
+
 nvidia-smi
 
 ############################################
-# 4. Launch vLLM
+# 5. Launch vLLM (1× H100)
 ############################################
 
 vllm serve zai-org/GLM-4.7-Flash \
