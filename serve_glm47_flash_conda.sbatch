@@ -9,18 +9,18 @@
 #SBATCH -o glm47_flash_1gpu.%j.out
 #SBATCH -e glm47_flash_1gpu.%j.err
 # ---------------------------
-# Verified against official Unsloth guide:
+# Install method matches official Unsloth guide exactly:
 #   https://unsloth.ai/docs/models/glm-4.7-flash#glm-4.7-flash-in-vllm
 #
-# Key facts from Unsloth guide:
-#   - vLLM nightly MUST use the cu130 index: https://wheels.vllm.ai/nightly/cu130
-#     (this is what makes glm47 tool-call-parser available)
-#   - Use Unsloth's FP8 model: unsloth/GLM-4.7-Flash-FP8-Dynamic
-#     (50% less KV cache memory vs base model, fits single H100 comfortably)
-#   - numba must be installed explicitly
-#   - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False is required
-#   - --tool-call-parser glm47 and --reasoning-parser glm45 are both correct
-#   - For 1 GPU: CUDA_VISIBLE_DEVICES='0', --tensor-parallel-size 1
+# Key: uses "uv pip install" not "pip install"
+#   - uv has built-in git support, so git+https:// works without system git
+#   - uv correctly resolves the nightly wheel that includes glm47 parser
+#   - uv is faster and more reliable for nightly/pre-release installs
+#
+# Adapted for 1x H100 (Unsloth guide targets 4x GPU):
+#   - CUDA_VISIBLE_DEVICES='0' instead of '0,1,2,3'
+#   - --tensor-parallel-size 1 instead of 4
+#   - --max-model-len 8192 instead of 200000 (200K ctx needs 4 GPUs)
 # ---------------------------
 set -x
 
@@ -34,38 +34,43 @@ export PYTHONUNBUFFERED=1
 export HF_HOME=$HOME/.cache/huggingface
 mkdir -p "$HF_HOME"
 
-# 3. Upgrade pip tooling
-pip install --upgrade pip setuptools wheel
+# 3. Install uv if not already present (no sudo needed, installs to ~/.local)
+if ! command -v uv &> /dev/null; then
+    echo "uv not found, installing..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    # Add uv to PATH for this session
+    export PATH="$HOME/.local/bin:$PATH"
+else
+    echo "uv found: $(uv --version)"
+    export PATH="$HOME/.local/bin:$PATH"
+fi
 
 # 4. Install PyTorch for CUDA 12.1
-#    Check your cluster CUDA version with: nvcc --version
-#    If CUDA 12.3+, switch to: https://download.pytorch.org/whl/cu124
+#    uv pip install respects the active conda env
 pip install --upgrade torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu121
 
-# 5. Install latest vLLM nightly using the cu130 index.
-#    CRITICAL: cu130 is the correct index — using the bare /nightly URL gives
-#    an older build that is missing the glm47 tool-call parser.
-pip install \
-    --no-cache-dir \
-    --force-reinstall \
+# 5. Install vLLM nightly using uv exactly as Unsloth guide specifies
+#    --torch-backend=auto lets uv detect the correct CUDA torch variant
+#    --extra-index-url https://wheels.vllm.ai/nightly/cu130 is the specific
+#    nightly index that contains the glm47 tool-call parser
+uv pip install \
     --upgrade \
-    --pre \
+    --force-reinstall \
     vllm \
+    --torch-backend=auto \
     --extra-index-url https://wheels.vllm.ai/nightly/cu130
 
-# 6. Install transformers from GitHub tarball (no git required on cluster).
-#    Must come AFTER vLLM to override its pinned transformers version.
-pip install --no-cache-dir --force-reinstall --upgrade \
-    "https://github.com/huggingface/transformers/archive/refs/heads/main.tar.gz"
+# 6. Install transformers from GitHub using uv (works without system git)
+uv pip install \
+    --upgrade \
+    --force-reinstall \
+    "git+https://github.com/huggingface/transformers.git"
 
-# 7. Install numba (required by vLLM nightly per Unsloth guide)
-pip install --no-cache-dir --force-reinstall numba
+# 7. Install numba (required per Unsloth guide)
+uv pip install --force-reinstall numba
 
-# 8. Fix huggingface_hub to be compatible with transformers 5.x
-pip install --no-cache-dir "huggingface_hub>=1.0,<2.0"
-
-# 9. Diagnostics
+# 8. Diagnostics
 python - <<'PY'
 import sys, importlib
 print("Python:", sys.executable)
@@ -76,43 +81,36 @@ for pkg in ("torch", "transformers", "vllm", "huggingface_hub", "numba"):
     except Exception as e:
         print(f"{pkg}: ERROR:", e)
 
-# Verify glm47 parser is present — if missing, nightly wheel is still too old
+# Confirm glm47 parser is present — job will exit here if still missing
 try:
     from vllm.entrypoints.openai.tool_parsers import ToolParserManager
     parsers = sorted(ToolParserManager._tool_parsers.keys())
-    print("Tool parsers available:", parsers)
-    if "glm47" in parsers:
-        print("glm47 parser: OK")
-    else:
-        print("FATAL: glm47 parser still missing — check nightly index URL")
-        sys.exit(1)
+    print("Tool parsers:", parsers)
+    assert "glm47" in parsers, "FATAL: glm47 parser missing — wrong nightly build"
+    print("glm47 parser: OK")
+except AssertionError as e:
+    print(e); sys.exit(1)
 except Exception as e:
-    print("Parser check error:", e)
-    sys.exit(1)
+    print("Parser check error:", e); sys.exit(1)
 PY
 nvidia-smi
 
-# 10. Serve GLM-4.7-Flash using Unsloth's FP8-Dynamic model
+# 9. Serve GLM-4.7-Flash (1 GPU version of official Unsloth command)
 #
-#    Why unsloth/GLM-4.7-Flash-FP8-Dynamic instead of zai-org/GLM-4.7-Flash:
-#      - FP8 quantization reduces KV cache memory usage by ~50%
-#      - Allows larger max-model-len on a single H100
-#      - Officially recommended by Unsloth for vLLM deployments
+#    Official Unsloth 4-GPU command:
+#      CUDA_VISIBLE_DEVICES='0,1,2,3' ... --tensor-parallel-size 4 --max-model-len 200000
 #
-#    Flag reference (all verified against Unsloth guide):
-#      --tool-call-parser glm47           GLM-4.7 specific tool call parser
-#      --reasoning-parser glm45           GLM-4.x thinking/reasoning parser
-#      --enable-auto-tool-choice          exposes tool-calling via OpenAI API
-#      --quantization fp8                 enable FP8 weight quantization
-#      --kv-cache-dtype fp8               enable FP8 KV cache (50% memory saving)
-#      --max_num_batched_tokens 16384     from Unsloth guide
-#      CUDA_VISIBLE_DEVICES='0'           single GPU (Unsloth uses 4; we use 1)
-#      PYTORCH_CUDA_ALLOC_CONF=...        required to avoid CUDA allocator issues
+#    Adapted for 1x H100:
+#      CUDA_VISIBLE_DEVICES='0'       single GPU
+#      --tensor-parallel-size 1       match GPU count
+#      --max-model-len 8192           reduced from 200K (needs 4 GPUs for full ctx)
+#
+#    Note: PYTORCH_ALLOC_CONF (not PYTORCH_CUDA_ALLOC_CONF — that name is deprecated)
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+export PYTORCH_ALLOC_CONF=expandable_segments:False
 
 CUDA_VISIBLE_DEVICES='0' stdbuf -oL -eL vllm serve unsloth/GLM-4.7-Flash-FP8-Dynamic \
-  --served-model-name glm-4.7-flash \
+  --served-model-name unsloth/GLM-4.7-Flash \
   --tensor-parallel-size 1 \
   --tool-call-parser glm47 \
   --reasoning-parser glm45 \
