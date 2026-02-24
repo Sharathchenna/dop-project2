@@ -8,59 +8,47 @@
 #SBATCH --job-name=glm47_flash_1gpu
 #SBATCH -o glm47_flash_1gpu.%j.out
 #SBATCH -e glm47_flash_1gpu.%j.err
-
 # ---------------------------
 # Notes:
-# - This script intentionally uses prebuilt vllm wheel (no compilation).
-# - Transformers from GitHub must be installed LAST to ensure glm4_moe_lite is available.
-# - Codecademy suggests using --trust-remote-code and --dtype bfloat16 for vllm serve. (See source)
+# - GLM-4.7-Flash requires vLLM nightly build + transformers from GitHub source.
+# - Do NOT use stable PyPI vLLM or --no-deps; the model uses glm4_moe_lite arch
+#   which is only in transformers@main.
+# - --tokenizer-mode slow is required to avoid AttributeError on all_special_tokens_extended.
+# - --tool-call-parser glm47 + --reasoning-parser glm45 are required for correct
+#   tool-use and thinking mode behaviour per official zai-org docs.
 # ---------------------------
 set -x
-# do not use "set -e" blindly; we want visible failure in output but not silent exits
-# ---------------------------
-# 0. Optional: set HF token (recommended to avoid HF rate limits)
-# export HF_TOKEN="hf_...."
 
 # 1. Activate conda env
 source /etc/profile
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate llm
-
 export PYTHONUNBUFFERED=1
 
-# 2. Hugging Face cache (safe user location)
+# 2. Hugging Face cache
 export HF_HOME=$HOME/.cache/huggingface
 mkdir -p "$HF_HOME"
 
-# 3. Clean previous partial installs (safe)
-pip uninstall -y vllm transformers huggingface-hub || true
-
-# 4. Upgrade build tooling
+# 3. Upgrade pip tooling
 pip install --upgrade pip setuptools wheel
 
-# 5. Install CUDA-capable PyTorch (use the cu121 index for CUDA 12.1)
-#    Adjust if your cluster needs a different CUDA wheel
-pip install --upgrade "torch" "torchvision" "torchaudio" --index-url https://download.pytorch.org/whl/cu121
+# 4. Install PyTorch (CUDA 12.1 wheel — adjust index if your cluster uses 12.4+)
+pip install --upgrade torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cu121
 
-# 6. Install vLLM from PyPI (prebuilt wheel). Use --no-deps to avoid it downgrading transformers.
-#    If a more recent prebuilt wheel exists (e.g. --pre) you can use that variant.
-pip install --upgrade vllm --no-deps
+# 5. Install vLLM nightly (required for glm4_moe_lite architecture support)
+#    Do NOT use --no-deps; let vLLM resolve its own dependency pins.
+pip install -U vllm \
+    --pre \
+    --index-url https://pypi.org/simple \
+    --extra-index-url https://wheels.vllm.ai/nightly
 
-# 7. Install Transformers & huggingface_hub from GitHub main (MUST BE LAST)
-#    This provides the new glm4_moe_lite model config.
-pip install --upgrade git+https://github.com/huggingface/transformers.git git+https://github.com/huggingface/huggingface_hub.git
-
-# 8. Optional: (recommended) install HF CLI if you want to pre-download GGUF files
+# 6. Install transformers from GitHub main AFTER vLLM
+#    (provides glm4_moe_lite model config not yet on PyPI release)
+pip install --upgrade git+https://github.com/huggingface/transformers.git
 pip install --upgrade huggingface_hub
 
-# 9. Optional: pre-download GGUF (uncomment to use; faster / avoids hub throttling)
-# if [ -n "$HF_TOKEN" ]; then
-#   export HUGGINGFACE_HUB_TOKEN="$HF_TOKEN"
-# fi
-# mkdir -p ~/models/glm-4.7-flash
-# huggingface-cli download zai-org/GLM-4.7-Flash --pattern "*Q4_K_M*.gguf" --dir ~/models/glm-4.7-flash
-
-# 10. Diagnostics (very useful)
+# 7. Diagnostics
 python - <<'PY'
 import sys, importlib
 print("Python:", sys.executable)
@@ -71,18 +59,30 @@ for pkg in ("torch", "transformers", "vllm", "huggingface_hub"):
     except Exception as e:
         print(f"{pkg}: NOT INSTALLED or import error:", e)
 PY
-
 nvidia-smi
 
-# 11. Run vLLM server (trust remote code per Codecademy + use bfloat16 on H100)
-#     - --trust-remote-code is required for some HF repos that ship custom code/configs
-#     - --dtype bfloat16 is recommended on H100 for memory/perf; change to bf16/float16 as you prefer
-stdbuf -oL -eL vllm serve zai-org/GLM-4.7-Flash \
+# 8. Serve GLM-4.7-Flash
+#    Key flags explained:
+#      --tokenizer-mode slow        : fixes AttributeError on all_special_tokens_extended
+#      --tool-call-parser glm47     : correct tool-call parsing for this model family
+#      --reasoning-parser glm45     : correct thinking/reasoning mode parsing
+#      --enable-auto-tool-choice    : exposes tool-calling via OpenAI-compatible API
+#      --no-enable-prefix-caching   : recommended by official vLLM GLM recipe
+#      --disable-log-requests       : reduces log noise in production
+#      SAFETENSORS_FAST_GPU=1       : recommended by official vLLM GLM recipe
+
+SAFETENSORS_FAST_GPU=1 stdbuf -oL -eL vllm serve zai-org/GLM-4.7-Flash \
   --trust-remote-code \
   --tensor-parallel-size 1 \
   --served-model-name glm-4.7-flash \
   --max-model-len 8192 \
   --dtype bfloat16 \
   --gpu-memory-utilization 0.90 \
+  --tokenizer-mode slow \
+  --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
+  --enable-auto-tool-choice \
+  --no-enable-prefix-caching \
+  --disable-log-requests \
   --host 0.0.0.0 \
   --port 8000
