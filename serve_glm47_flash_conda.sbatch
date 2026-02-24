@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -p gpu
+#SBATCH -p gpu_h100_4
 #SBATCH -N 1
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=16
