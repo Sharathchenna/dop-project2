@@ -9,18 +9,18 @@
 #SBATCH -o glm47_flash_1gpu.%j.out
 #SBATCH -e glm47_flash_1gpu.%j.err
 # ---------------------------
-# Sources verified against:
-#   - Official HF model card: https://huggingface.co/zai-org/GLM-4.7-Flash
-#   - Official vLLM recipes:  https://docs.vllm.ai/projects/recipes/en/latest/GLM/GLM.html
-#   - vLLM tool calling docs: https://docs.vllm.ai/en/latest/features/tool_calling/
+# Verified against official Unsloth guide:
+#   https://unsloth.ai/docs/models/glm-4.7-flash#glm-4.7-flash-in-vllm
 #
-# Key facts:
-#   --tool-call-parser glm47   is correct (confirmed by official docs)
-#   --reasoning-parser glm45   is correct (confirmed by official docs)
-#   glm47 parser was added recently — an old nightly wheel won't have it.
-#   Fix: force install the LATEST nightly by explicitly no-caching pip.
-#
-# No git on cluster: use tarball URLs for GitHub-hosted packages.
+# Key facts from Unsloth guide:
+#   - vLLM nightly MUST use the cu130 index: https://wheels.vllm.ai/nightly/cu130
+#     (this is what makes glm47 tool-call-parser available)
+#   - Use Unsloth's FP8 model: unsloth/GLM-4.7-Flash-FP8-Dynamic
+#     (50% less KV cache memory vs base model, fits single H100 comfortably)
+#   - numba must be installed explicitly
+#   - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False is required
+#   - --tool-call-parser glm47 and --reasoning-parser glm45 are both correct
+#   - For 1 GPU: CUDA_VISIBLE_DEVICES='0', --tensor-parallel-size 1
 # ---------------------------
 set -x
 
@@ -39,93 +39,91 @@ pip install --upgrade pip setuptools wheel
 
 # 4. Install PyTorch for CUDA 12.1
 #    Check your cluster CUDA version with: nvcc --version
-#    If CUDA 12.4+, use --index-url https://download.pytorch.org/whl/cu124 instead
+#    If CUDA 12.3+, switch to: https://download.pytorch.org/whl/cu124
 pip install --upgrade torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu121
 
-# 5. Install the LATEST vLLM nightly.
-#    --no-cache-dir forces pip to re-download rather than use a stale cached wheel.
-#    This is critical — without it you may get an old nightly missing the glm47 parser.
+# 5. Install latest vLLM nightly using the cu130 index.
+#    CRITICAL: cu130 is the correct index — using the bare /nightly URL gives
+#    an older build that is missing the glm47 tool-call parser.
 pip install \
     --no-cache-dir \
+    --force-reinstall \
     --upgrade \
     --pre \
     vllm \
-    --index-url https://pypi.org/simple \
-    --extra-index-url https://wheels.vllm.ai/nightly
+    --extra-index-url https://wheels.vllm.ai/nightly/cu130
 
-# 6. Verify glm47 parser is present in the installed build
-python - <<'PY'
-import sys
-try:
-    from vllm.entrypoints.openai.tool_parsers import ToolParserManager
-    parsers = list(ToolParserManager._tool_parsers.keys())
-    print("Available tool parsers:", sorted(parsers))
-    if "glm47" in parsers:
-        print("✅ glm47 parser: FOUND")
-    else:
-        print("❌ glm47 parser: MISSING — nightly may still be too old")
-        print("   Fallback: use --tool-call-parser glm45 temporarily")
-except Exception as e:
-    print("Parser check error:", e)
-PY
-
-# 7. Install transformers from GitHub tarball (no git required on cluster).
-#    Must come AFTER vLLM so it overrides vLLM's pinned transformers version.
-#    Using transformers 5.x (main) which accepts huggingface-hub >= 1.0,
-#    resolving the huggingface-hub version conflict from transformers 4.57.x.
-pip install --no-cache-dir --upgrade \
+# 6. Install transformers from GitHub tarball (no git required on cluster).
+#    Must come AFTER vLLM to override its pinned transformers version.
+pip install --no-cache-dir --force-reinstall --upgrade \
     "https://github.com/huggingface/transformers/archive/refs/heads/main.tar.gz"
 
-# 8. Pin huggingface_hub to a version compatible with transformers 5.x
+# 7. Install numba (required by vLLM nightly per Unsloth guide)
+pip install --no-cache-dir --force-reinstall numba
+
+# 8. Fix huggingface_hub to be compatible with transformers 5.x
 pip install --no-cache-dir "huggingface_hub>=1.0,<2.0"
 
 # 9. Diagnostics
 python - <<'PY'
 import sys, importlib
 print("Python:", sys.executable)
-for pkg in ("torch", "transformers", "vllm", "huggingface_hub"):
+for pkg in ("torch", "transformers", "vllm", "huggingface_hub", "numba"):
     try:
         m = importlib.import_module(pkg)
         print(f"{pkg}:", getattr(m, "__version__", "unknown"))
     except Exception as e:
         print(f"{pkg}: ERROR:", e)
 
-# Check glm4_moe_lite arch is available (required for GLM-4.7-Flash)
+# Verify glm47 parser is present — if missing, nightly wheel is still too old
 try:
-    from transformers.models.glm4_moe_lite import Glm4MoeLiteConfig
-    print("glm4_moe_lite: ✅ OK")
-except ImportError as e:
-    print("glm4_moe_lite: ❌ MISSING —", e)
+    from vllm.entrypoints.openai.tool_parsers import ToolParserManager
+    parsers = sorted(ToolParserManager._tool_parsers.keys())
+    print("Tool parsers available:", parsers)
+    if "glm47" in parsers:
+        print("glm47 parser: OK")
+    else:
+        print("FATAL: glm47 parser still missing — check nightly index URL")
+        sys.exit(1)
+except Exception as e:
+    print("Parser check error:", e)
+    sys.exit(1)
 PY
 nvidia-smi
 
-# 10. Serve GLM-4.7-Flash
+# 10. Serve GLM-4.7-Flash using Unsloth's FP8-Dynamic model
 #
-#    Flags confirmed against official zai-org HF model card and vLLM recipes docs:
-#      --tool-call-parser glm47       official GLM-4.7 tool call parser
-#      --reasoning-parser glm45       official GLM-4.x reasoning/thinking parser
-#      --enable-auto-tool-choice      required to expose tool-calling via OpenAI API
-#      --tokenizer-mode slow          fixes AttributeError: all_special_tokens_extended
-#      --no-enable-prefix-caching     recommended by official vLLM GLM recipe
-#      --disable-log-requests         reduces log noise
-#      SAFETENSORS_FAST_GPU=1         recommended by official vLLM GLM recipe
+#    Why unsloth/GLM-4.7-Flash-FP8-Dynamic instead of zai-org/GLM-4.7-Flash:
+#      - FP8 quantization reduces KV cache memory usage by ~50%
+#      - Allows larger max-model-len on a single H100
+#      - Officially recommended by Unsloth for vLLM deployments
 #
-#    NOTE: Thinking mode is ON by default. To disable per-request, pass:
-#      extra_body={"chat_template_kwargs": {"enable_thinking": false}}
+#    Flag reference (all verified against Unsloth guide):
+#      --tool-call-parser glm47           GLM-4.7 specific tool call parser
+#      --reasoning-parser glm45           GLM-4.x thinking/reasoning parser
+#      --enable-auto-tool-choice          exposes tool-calling via OpenAI API
+#      --quantization fp8                 enable FP8 weight quantization
+#      --kv-cache-dtype fp8               enable FP8 KV cache (50% memory saving)
+#      --max_num_batched_tokens 16384     from Unsloth guide
+#      CUDA_VISIBLE_DEVICES='0'           single GPU (Unsloth uses 4; we use 1)
+#      PYTORCH_CUDA_ALLOC_CONF=...        required to avoid CUDA allocator issues
 
-SAFETENSORS_FAST_GPU=1 stdbuf -oL -eL vllm serve zai-org/GLM-4.7-Flash \
-  --trust-remote-code \
-  --tensor-parallel-size 1 \
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False
+
+CUDA_VISIBLE_DEVICES='0' stdbuf -oL -eL vllm serve unsloth/GLM-4.7-Flash-FP8-Dynamic \
   --served-model-name glm-4.7-flash \
-  --max-model-len 8192 \
-  --dtype bfloat16 \
-  --gpu-memory-utilization 0.90 \
-  --tokenizer-mode slow \
+  --tensor-parallel-size 1 \
   --tool-call-parser glm47 \
   --reasoning-parser glm45 \
   --enable-auto-tool-choice \
-  --no-enable-prefix-caching \
+  --dtype bfloat16 \
+  --seed 3407 \
+  --max-model-len 8192 \
+  --gpu-memory-utilization 0.95 \
+  --max_num_batched_tokens 16384 \
+  --quantization fp8 \
+  --kv-cache-dtype fp8 \
   --disable-log-requests \
   --host 0.0.0.0 \
   --port 8000
