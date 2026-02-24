@@ -10,10 +10,8 @@
 #SBATCH -e glm47_flash_1gpu.%j.err
 
 ############################################
-# 1. Initialize environment (REQUIRED)
+# 1. Environment init
 ############################################
-
-set -e
 
 source /etc/profile
 source ~/miniconda3/etc/profile.d/conda.sh
@@ -22,66 +20,64 @@ conda activate llm
 export PYTHONUNBUFFERED=1
 
 ############################################
-# 2. Hugging Face cache (safe location)
+# 2. Hugging Face cache
 ############################################
 
 export HF_HOME=$HOME/hf_cache
 mkdir -p $HF_HOME
 
 ############################################
-# 3. Install dependencies (only if missing)
+# 3. Dependency checks (SAFE)
 ############################################
 
-echo "🔍 Checking dependencies..."
-
-# ---- PyTorch (CUDA 12.x, H100 compatible)
-if ! python - << 'EOF'
+echo "🔍 Checking PyTorch + CUDA..."
+python - << 'EOF'
 import torch
-print(torch.cuda.is_available())
+print("CUDA available:", torch.cuda.is_available())
 EOF
-then
-    echo "📦 Installing PyTorch (CUDA 12.x)"
-    pip install --upgrade pip
-    pip install torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/cu121
-fi
 
-# ---- vLLM
+echo "🔍 Checking vLLM..."
 if ! command -v vllm &> /dev/null; then
     echo "📦 Installing vLLM"
     pip install vllm
 fi
 
-# ---- Transformers (GLM-4 requires dev version)
+echo "🔍 Checking Transformers version..."
+TRANSFORMERS_OK=0
 python - << 'EOF'
 import transformers
-exit(0 if "dev" in transformers.__version__ else 1)
+print("Transformers version:", transformers.__version__)
+if "dev" in transformers.__version__:
+    exit(0)
+exit(1)
 EOF
+TRANSFORMERS_OK=$?
 
-if [ $? -ne 0 ]; then
-    echo "📦 Installing Transformers (GitHub dev version for GLM-4)"
+if [ $TRANSFORMERS_OK -ne 0 ]; then
+    echo "📦 Installing Transformers (GitHub dev for GLM-4)"
     pip uninstall -y transformers
     pip install git+https://github.com/huggingface/transformers.git
+else
+    echo "✅ Transformers dev version already installed"
 fi
 
 ############################################
-# 4. Diagnostics (VERY IMPORTANT)
+# 4. Final diagnostics
 ############################################
 
-echo "================ ENV CHECK ================"
-echo "Node: $(hostname)"
-echo "Python: $(which python)"
-echo "vLLM: $(which vllm)"
+echo "================ FINAL CHECK ================"
+which python
+which vllm
 python - << 'EOF'
 import torch, transformers
-print("Torch CUDA available:", torch.cuda.is_available())
-print("Transformers version:", transformers.__version__)
+print("CUDA available:", torch.cuda.is_available())
+print("Transformers:", transformers.__version__)
 EOF
 nvidia-smi
-echo "==========================================="
+echo "============================================"
 
 ############################################
-# 5. Launch vLLM server (1× H100)
+# 5. Start vLLM server
 ############################################
 
 echo "🚀 Starting vLLM server..."
