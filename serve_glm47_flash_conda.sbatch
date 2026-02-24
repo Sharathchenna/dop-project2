@@ -9,15 +9,18 @@
 #SBATCH -o glm47_flash_1gpu.%j.out
 #SBATCH -e glm47_flash_1gpu.%j.err
 # ---------------------------
-# Notes:
-# - Uses GitHub tarball URLs instead of git+https:// because git is not
-#   available on this HPC cluster.
-# - vLLM nightly is required; glm4_moe_lite arch is not in stable releases.
-# - transformers must be upgraded to 5.x AFTER vLLM install to resolve the
-#   huggingface-hub<1.0 vs >=1.0 conflict (vLLM nightly pins 4.57.x,
-#   but 5.x accepts huggingface-hub 1.x).
-# - --tokenizer-mode slow fixes AttributeError: all_special_tokens_extended.
-# - --tool-call-parser glm47 is correct for GLM-4.7 family (not glm45).
+# Sources verified against:
+#   - Official HF model card: https://huggingface.co/zai-org/GLM-4.7-Flash
+#   - Official vLLM recipes:  https://docs.vllm.ai/projects/recipes/en/latest/GLM/GLM.html
+#   - vLLM tool calling docs: https://docs.vllm.ai/en/latest/features/tool_calling/
+#
+# Key facts:
+#   --tool-call-parser glm47   is correct (confirmed by official docs)
+#   --reasoning-parser glm45   is correct (confirmed by official docs)
+#   glm47 parser was added recently — an old nightly wheel won't have it.
+#   Fix: force install the LATEST nightly by explicitly no-caching pip.
+#
+# No git on cluster: use tarball URLs for GitHub-hosted packages.
 # ---------------------------
 set -x
 
@@ -34,30 +37,50 @@ mkdir -p "$HF_HOME"
 # 3. Upgrade pip tooling
 pip install --upgrade pip setuptools wheel
 
-# 4. Install PyTorch for CUDA 12.1 (adjust index URL if cluster uses 12.4+)
+# 4. Install PyTorch for CUDA 12.1
+#    Check your cluster CUDA version with: nvcc --version
+#    If CUDA 12.4+, use --index-url https://download.pytorch.org/whl/cu124 instead
 pip install --upgrade torch torchvision torchaudio \
     --index-url https://download.pytorch.org/whl/cu121
 
-# 5. Install vLLM nightly — required for glm4_moe_lite architecture support.
-#    Do NOT add --no-deps; let vLLM resolve its own pinned deps first.
-#    The nightly wheel index is what the official HF model card specifies.
-pip install -U vllm \
+# 5. Install the LATEST vLLM nightly.
+#    --no-cache-dir forces pip to re-download rather than use a stale cached wheel.
+#    This is critical — without it you may get an old nightly missing the glm47 parser.
+pip install \
+    --no-cache-dir \
+    --upgrade \
     --pre \
+    vllm \
     --index-url https://pypi.org/simple \
     --extra-index-url https://wheels.vllm.ai/nightly
 
-# 6. Upgrade transformers to 5.x using the GitHub tarball (no git required).
-#    This resolves the huggingface-hub version conflict:
-#      transformers 4.57.x (installed by vLLM) requires huggingface-hub<1.0
-#      transformers 5.x requires huggingface-hub>=1.0  <-- compatible
-#    Must come AFTER vLLM so it overrides vLLM's pinned 4.57.x.
-pip install --upgrade \
+# 6. Verify glm47 parser is present in the installed build
+python - <<'PY'
+import sys
+try:
+    from vllm.entrypoints.openai.tool_parsers import ToolParserManager
+    parsers = list(ToolParserManager._tool_parsers.keys())
+    print("Available tool parsers:", sorted(parsers))
+    if "glm47" in parsers:
+        print("✅ glm47 parser: FOUND")
+    else:
+        print("❌ glm47 parser: MISSING — nightly may still be too old")
+        print("   Fallback: use --tool-call-parser glm45 temporarily")
+except Exception as e:
+    print("Parser check error:", e)
+PY
+
+# 7. Install transformers from GitHub tarball (no git required on cluster).
+#    Must come AFTER vLLM so it overrides vLLM's pinned transformers version.
+#    Using transformers 5.x (main) which accepts huggingface-hub >= 1.0,
+#    resolving the huggingface-hub version conflict from transformers 4.57.x.
+pip install --no-cache-dir --upgrade \
     "https://github.com/huggingface/transformers/archive/refs/heads/main.tar.gz"
 
-# 7. Ensure huggingface_hub is at a compatible version for transformers 5.x
-pip install "huggingface_hub>=1.0"
+# 8. Pin huggingface_hub to a version compatible with transformers 5.x
+pip install --no-cache-dir "huggingface_hub>=1.0,<2.0"
 
-# 8. Diagnostics
+# 9. Diagnostics
 python - <<'PY'
 import sys, importlib
 print("Python:", sys.executable)
@@ -66,37 +89,29 @@ for pkg in ("torch", "transformers", "vllm", "huggingface_hub"):
         m = importlib.import_module(pkg)
         print(f"{pkg}:", getattr(m, "__version__", "unknown"))
     except Exception as e:
-        print(f"{pkg}: NOT INSTALLED or import error:", e)
+        print(f"{pkg}: ERROR:", e)
 
-# Sanity-check that glm4_moe_lite is present in this transformers build
+# Check glm4_moe_lite arch is available (required for GLM-4.7-Flash)
 try:
     from transformers.models.glm4_moe_lite import Glm4MoeLiteConfig
-    print("glm4_moe_lite: OK (Glm4MoeLiteConfig found)")
+    print("glm4_moe_lite: ✅ OK")
 except ImportError as e:
-    print("glm4_moe_lite: MISSING —", e)
-
-# Sanity-check the tokenizer attribute that was previously failing
-try:
-    from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained("THUDM/chatglm3-6b", trust_remote_code=True)
-    _ = tok.all_special_tokens_extended
-    print("all_special_tokens_extended: OK")
-except Exception as e:
-    print("all_special_tokens_extended check:", e)
+    print("glm4_moe_lite: ❌ MISSING —", e)
 PY
 nvidia-smi
 
-# 9. Serve GLM-4.7-Flash
-#    Key flags:
+# 10. Serve GLM-4.7-Flash
+#
+#    Flags confirmed against official zai-org HF model card and vLLM recipes docs:
+#      --tool-call-parser glm47       official GLM-4.7 tool call parser
+#      --reasoning-parser glm45       official GLM-4.x reasoning/thinking parser
+#      --enable-auto-tool-choice      required to expose tool-calling via OpenAI API
 #      --tokenizer-mode slow          fixes AttributeError: all_special_tokens_extended
-#      --tool-call-parser glm47       correct parser for GLM-4.7 family (glm47, NOT glm45)
-#      --reasoning-parser glm45       correct thinking/reasoning parser (glm45 for all GLM-4.x)
-#      --enable-auto-tool-choice      exposes tool-calling via OpenAI-compatible API
 #      --no-enable-prefix-caching     recommended by official vLLM GLM recipe
 #      --disable-log-requests         reduces log noise
 #      SAFETENSORS_FAST_GPU=1         recommended by official vLLM GLM recipe
 #
-#    NOTE: Thinking mode is ON by default. To disable it in a request, pass:
+#    NOTE: Thinking mode is ON by default. To disable per-request, pass:
 #      extra_body={"chat_template_kwargs": {"enable_thinking": false}}
 
 SAFETENSORS_FAST_GPU=1 stdbuf -oL -eL vllm serve zai-org/GLM-4.7-Flash \
