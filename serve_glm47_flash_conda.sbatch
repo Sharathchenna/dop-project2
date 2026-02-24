@@ -1,56 +1,41 @@
 #!/bin/bash
-#SBATCH -p gpu_h100_4              # correct partition
+#SBATCH -p gpu_h100_4
 #SBATCH -N 1
-#SBATCH --gres=gpu:1               # ✅ ONLY 1× H100
-#SBATCH --cpus-per-task=4          # minimal CPU (vLLM is GPU-bound)
-#SBATCH --mem=200G                 # safe for 1 GPU
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=200G
 #SBATCH -t 24:00:00
 #SBATCH --job-name=glm47_flash_1gpu
 #SBATCH -o glm47_flash_1gpu.%j.out
 #SBATCH -e glm47_flash_1gpu.%j.err
 
 ############################################
-# 1. Initialize Miniconda
+# 1. Proper environment initialization
 ############################################
 
+source /etc/profile
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate llm
 
 ############################################
-# 2. System modules
+# 2. Hugging Face cache (SAFE LOCATION)
 ############################################
 
-module load cuda/12.1
-module load gcc/11
-
-############################################
-# 3. Hugging Face cache (SCRATCH)
-############################################
-
-export HF_HOME=$SCRATCH/hf_cache
+export HF_HOME=$HOME/hf_cache
 export TRANSFORMERS_CACHE=$HF_HOME
-export HF_HUB_ENABLE_HF_TRANSFER=1
-
 mkdir -p $HF_HOME
 
 ############################################
-# 4. Diagnostics
+# 3. Diagnostics
 ############################################
 
 echo "Node: $(hostname)"
-which python
+echo "Python path: $(which python)"
+echo "vLLM path: $(which vllm)"
 nvidia-smi
 
 ############################################
-# 5. NCCL / CUDA safety
-############################################
-
-export CUDA_VISIBLE_DEVICES=0
-export NCCL_DEBUG=WARN
-export NCCL_ASYNC_ERROR_HANDLING=1
-
-############################################
-# 6. Launch vLLM (single GPU)
+# 4. Launch vLLM
 ############################################
 
 vllm serve zai-org/GLM-4.7-Flash \
@@ -58,8 +43,5 @@ vllm serve zai-org/GLM-4.7-Flash \
   --served-model-name glm-4.7-flash \
   --max-model-len 8192 \
   --gpu-memory-utilization 0.90 \
-  --enable-auto-tool-choice \
-  --tool-call-parser glm47 \
-  --reasoning-parser glm45 \
   --host 0.0.0.0 \
   --port 8000
