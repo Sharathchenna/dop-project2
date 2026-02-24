@@ -5,56 +5,70 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=200G
 #SBATCH -t 24:00:00
-#SBATCH --job-name=glm47_flash_1gpu
-#SBATCH -o glm47_flash_1gpu.%j.out
-#SBATCH -e glm47_flash_1gpu.%j.err
+#SBATCH --job-name=glm47_flash
+#SBATCH -o glm47_flash.%j.out
+#SBATCH -e glm47_flash.%j.err
 
-# 1. Init environment
+set -e
+set -x
+
+# -------------------------------
+# Environment
+# -------------------------------
 source /etc/profile
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate llm
 export PYTHONUNBUFFERED=1
 
-# 2. Cache
-export HF_HOME=$HOME/hf_cache
+# -------------------------------
+# HuggingFace cache (NO /hf_cache)
+# -------------------------------
+export HF_HOME=$HOME/.cache/huggingface
 mkdir -p $HF_HOME
 
-# 3. Dependency installs
-echo "🔍 Installing dependencies..."
+# Optional but recommended
+# export HF_TOKEN=xxxxxxxxxxxxxxxx
 
-# ---- PyTorch CUDA 12.1
-python - << 'EOF'
-import torch
-if not torch.cuda.is_available():
-    raise SystemExit("CUDA not available")
-EOF
+# -------------------------------
+# Clean broken installs
+# -------------------------------
+pip uninstall -y vllm transformers torch
 
+# -------------------------------
+# PyTorch (CUDA 12.x compatible)
+# -------------------------------
 pip install --upgrade pip
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.4.0+cu121 \
+  --index-url https://download.pytorch.org/whl/cu121
 
-# ---- Install latest Transformers from GitHub
-pip uninstall -y transformers
+# -------------------------------
+# Transformers (GitHub main)
+# -------------------------------
 pip install git+https://github.com/huggingface/transformers.git
 
-# ---- Install latest vLLM from GitHub
-pip uninstall -y vllm
-pip install git+https://github.com/vllm-project/vllm.git@main
+# -------------------------------
+# vLLM (PREBUILT – NO COMPILATION)
+# -------------------------------
+pip install vllm==0.11.2
 
-# 4. Diagnostics
-echo "=== ENVIRONMENT CHECK ==="
-which python
-which vllm
+# -------------------------------
+# Sanity checks
+# -------------------------------
 python - << 'EOF'
 import torch, transformers, vllm
-print("Torch CUDA:", torch.cuda.is_available())
-print("Transformers version:", transformers.__version__)
-print("vLLM version:", vllm.__version__)
+print("CUDA:", torch.cuda.is_available())
+print("Torch:", torch.__version__)
+print("Transformers:", transformers.__version__)
+print("vLLM:", vllm.__version__)
 EOF
-nvidia-smi
-echo "========================="
 
-# 5. Launch model server
+nvidia-smi
+
+# -------------------------------
+# Start server
+# -------------------------------
 echo "🚀 Starting vLLM server..."
+
 stdbuf -oL -eL vllm serve zai-org/GLM-4.7-Flash \
   --tensor-parallel-size 1 \
   --served-model-name glm-4.7-flash \
